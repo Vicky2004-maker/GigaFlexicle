@@ -3,13 +3,20 @@ import os
 import numpy as np
 from numpy.random import randint
 import matplotlib.pylab as plt
+import seaborn as sns
 import cv2
 
-from keras.layers import Dense, Conv2D, BatchNormalization, MaxPooling2D, Input, Resizing
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+
+from keras.layers import Dense, Conv2D, BatchNormalization, MaxPooling2D, Input, Resizing, Normalization, Conv3D, \
+    Flatten
 from keras import Sequential
-from keras.losses import categorical_crossentropy
+from keras.losses import categorical_crossentropy, binary_crossentropy, CategoricalCrossentropy, \
+    SparseCategoricalCrossentropy, _ragged_tensor_categorical_crossentropy
 from keras.optimizers import Adam, SGD
 from keras.activations import relu
+from keras.metrics import Accuracy
+import tensorflow as tf
 
 # %% Data Loading
 
@@ -72,7 +79,8 @@ xy = int(np.ceil(np.sqrt(len(files_visualize))))
 for file_ind, file_path in enumerate(files_visualize):
     plt.subplot(xy, xy, file_ind + 1)
     __f = file_path
-    plt.imshow(cv2.imread(__f))
+    plt.imshow(cv2.cvtColor(cv2.imread(__f), cv2.COLOR_BGR2RGB))
+
     __f = __f.split("\\")
     plt.title(str.upper(" ".join([__f[5], __f[6], __f[7]])))
     plt.axis('off')
@@ -94,47 +102,68 @@ for ind in target_data.index:
     for __img_path in os.listdir(target_data.loc[ind, 'Folder_Path']):
         # TODO: Preprocess the images
         __img_matrix = cv2.imread(os.path.join(target_data.loc[ind, 'Folder_Path'], __img_path))
+        __img_matrix = cv2.cvtColor(__img_matrix, cv2.COLOR_BGR2RGB)
         __img_matrix = cv2.cvtColor(__img_matrix, cv2.COLOR_BGR2GRAY)
         __img_matrix = cv2.resize(__img_matrix, (128, 128))
+        __img_matrix = cv2.normalize(__img_matrix, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+        __img_matrix = np.array(__img_matrix, dtype='float32')
         X_train.append(__img_matrix)
         y_train.append(
             f"{target_data.loc[ind, 'Brand']}_{target_data.loc[ind, 'Model']}_{target_data.loc[ind, 'Variant']}")
 
 X_train = np.array(X_train)
-y_train = np.array(y_train)
+onehot_encoder = OneHotEncoder(sparse_output=False)
+y_train = onehot_encoder.fit_transform(np.array(y_train).reshape((-1, 1)))
 
+n_classes = y_train.shape[-1]
+
+print(f"Number of Classes is {n_classes}")
 # %%
 
 print(X_train.shape)
 print(X_train[0].shape)
 print(y_train.shape)
+print(X_train.shape[0])
+
 # %% MODEL DEVELOPMENT
 
 # FIXME: Depending upon the accuracy if necessary add Data Augmentation
 
 model = Sequential(layers=[
-    Input(X_train.shape, 32, ragged=True),
+    Input((128, 128, 1), name="InputLayer_1", ragged=True),
 
-    Conv2D(4, 3, padding='same', activation=relu),
-    MaxPooling2D(),
+    Conv2D(4, 3, padding='same', activation=relu, name="Conv2D_1", data_format="channels_last"),
+    MaxPooling2D(name="MaxPooling2D_1", data_format="channels_last"),
 
-    Conv2D(8, 3, padding='same', activation=relu),
-    MaxPooling2D(),
+    Conv2D(8, 3, padding='same', activation=relu, name="Conv2D_2", data_format="channels_last"),
+    MaxPooling2D(name="MaxPooling2D_2", data_format="channels_last"),
 
-    Conv2D(16, 3, padding='same', activation=relu),
-    MaxPooling2D(),
+    Conv2D(16, 3, padding='same', activation=relu, name="Conv2D_3", data_format="channels_last"),
+    MaxPooling2D(name="MaxPooling2D_3", data_format="channels_last"),
 
-    Conv2D(32, 3, padding='same', activation=relu),
-    MaxPooling2D(),
+    Conv2D(32, 3, padding='same', activation=relu, name="Conv2D_4", data_format="channels_last"),
+    MaxPooling2D(name="MaxPooling2D_4", data_format="channels_last"),
 
-    Dense(y_train.shape)
+    Flatten(),
+
+    Dense(64, activation='relu'),
+    Dense(128, activation='relu'),
+    Dense(256, activation='relu'),
+    Dense(256, activation='relu'),
+    Dense(128, activation='relu'),
+    Dense(64, activation='relu'),
+
+    Dense(n_classes, name="OutputLayer_1", activation='softmax')
 
 ], name='Sequential_Main')
 
 model.compile(
     optimizer=Adam(),
-    loss=categorical_crossentropy,
-    metrics=['accuracy']
+    loss=CategoricalCrossentropy(),
+    metrics=[Accuracy()]
 )
+print(model.summary())
+history = model.fit(X_train, y_train, batch_size=32, epochs=200, use_multiprocessing=True, workers=-1)
+# %%
 
-history = model.fit(X_train, y_train, batch_size=32, epochs=1, workers=-1, use_multiprocessing=True)
+history = history.history
